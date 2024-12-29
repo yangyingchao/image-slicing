@@ -74,6 +74,8 @@
 
 (defvar image-slicing-debug-p nil)
 
+(defvar image-slicing-curl-buffers nil  "List of buffers used by curl.")
+
 (defun image-slicing--async-start-process (name program finish-func &rest program-args)
   "Start the executable PROGRAM asynchronously named NAME.
 PROGRAM is passed PROGRAM-ARGS, calling FINISH-FUNC with the
@@ -102,7 +104,8 @@ working directory."
          (with-current-buffer (process-buffer proc)
            (funcall finish-func (buffer-string))
            (unless image-slicing-debug-p
-             (kill-buffer))))))))
+             (kill-buffer))))))
+    (push (cons buf buf-err) image-slicing-curl-buffers)))
 
 (defun image-slicing--remote-file-p (image-src)
   "Check if IMAGE-SRC is a remote file."
@@ -286,7 +289,14 @@ This function is installed on `post-command-hook'."
   "Auto image overlay."
   (setq image-slicing--links (image-slicing--overlay-list-links))
   (setq image-slicing--timer (image-slicing--create-render-timer))
-
+  (let ((kill-buffer-query-functions nil)
+        (iter))
+    (while (setq it (pop image-slicing-curl-buffers))
+      (when-let* ((process (get-buffer-process (car it)))
+                  (process-live-p process))
+        (kill-process process))
+      (kill-buffer (car it))
+      (kill-buffer (cdr it))))
   (add-hook 'post-command-hook #'image-slicing-post-command nil t))
 
 (defun image-slicing-tag-img (dom &optional url)
@@ -303,6 +313,24 @@ This function is installed on `post-command-hook'."
   (if (not image-slicing-mode)
       (image-slicing-clear)
     (image-slicing-render-buffer)))
+
+(defun shr/toggle-image-slicing (&optional enable)
+  "Toggle image-slicing then refresh current buffer."
+  (interactive)
+  (if (or enable (not (member #'image-slicing-mode eww-after-render-hook)))
+      (progn
+        (pushnew! shr-external-rendering-functions '(img . image-slicing-tag-img))
+        (add-hook 'eww-after-render-hook #'image-slicing-mode)
+        (message "image-slicing-mode is ON."))
+    (setq shr-external-rendering-functions
+          (-remove-item '(img . image-slicing-tag-img) shr-external-rendering-functions))
+    (remove-hook 'eww-after-render-hook #'image-slicing-mode)
+    (message "image-slicing-mode is OFF."))
+  (pcase major-mode
+    ('eww-mode (eww-reload))
+    ('elfeed-show-mode (elfeed-show-refresh))
+    (_ nil)))
+
 
 (provide 'image-slicing)
 ;;; image-slicing.el ends here
