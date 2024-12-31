@@ -182,14 +182,21 @@ If BEFORE-STRING or AFTER-STRING not nil, put overlay before-string or after-str
       (image-slicing--download-file-if-need
        image-src
        (lambda (image)
-         (unless line-beginning-p
-           (image-slicing-display begin (1+ begin) "" buffer new-line-str)
-           (setq begin (1+ begin)))
-         (dolist (image (image-slicing-slice image (- end begin 1)))
-           (image-slicing-display begin (1+ begin) image buffer nil new-line-str)
-           (setq begin (1+ begin)))
-         (image-slicing-display begin end "" buffer)
-         (plist-put image-file-info :status "finished"))))))
+         (when (or (image-slicing-supported-url-p image)
+                   (and (executable-find "file")
+                        (image-supported-file-p
+                         (string-replace "image/" "."
+                                         (car (string-split (shell-command-to-string
+                                                             (concat "file -b --mime " image))
+                                                            ";"))))))
+             (unless line-beginning-p
+               (image-slicing-display begin (1+ begin) "" buffer new-line-str)
+               (setq begin (1+ begin)))
+           (dolist (image (image-slicing-slice image (- end begin 1)))
+             (image-slicing-display begin (1+ begin) image buffer nil new-line-str)
+             (setq begin (1+ begin)))
+           (image-slicing-display begin end "" buffer)
+           (plist-put image-file-info :status "finished")))))))
 
 (defun image-slicing-run-tasks ()
   "Run Tasks unstarted."
@@ -222,7 +229,7 @@ If BEFORE-STRING or AFTER-STRING not nil, put overlay before-string or after-str
                 (begin (org-element-property :begin link))
                 (end (org-element-property :end link))
                 (raw-link (org-element-property :raw-link link)))
-            (when (and link (image-slicing-supported-url-p raw-link))
+            (when link
               (push
                (list
                 :status "init"
@@ -315,6 +322,7 @@ This function is installed on `post-command-hook'."
       (image-slicing-clear)
     (image-slicing-render-buffer)))
 
+(autoload 'elfeed-show-refresh "elfeed-show.el")
 (defun shr/toggle-image-slicing (&optional enable)
   "Toggle image-slicing then refresh current buffer."
   (interactive)
