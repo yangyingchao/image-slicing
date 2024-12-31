@@ -40,13 +40,13 @@
 (require 'image)
 (require 'url-util)
 (require 'cl-extra)
-(require 'dash)
+(require 'eww)
 
 (defcustom image-slicing-cursor-fringe-bitmaps
   '(left-fringe right-arrow warning)
   "Define the Fringe Bitmaps indicator for the cursor position."
   :group 'image-slicing
-  :type 'list)
+  :type '(repeat symbol))
 
 (defcustom image-slicing-download-concurrency 20
   "Define the maximum concurrency of images download."
@@ -63,19 +63,19 @@
   :group 'image-slicing
   :type 'number)
 
-(defvar image-slicing--cursor-fringe-overlay nil)
+(defvar-local image-slicing--cursor-fringe-overlay nil)
 
-(defvar image-slicing--links nil)
+(defvar-local image-slicing--links nil)
 
-(defvar image-slicing--overlay-list nil)
+(defvar-local image-slicing--overlay-list nil)
 
 (defvar image-slicing--temporary-file-template "image-slicing-remote-images-")
 
-(defvar image-slicing--timer nil)
+(defvar-local image-slicing--timer nil)
 
 (defvar image-slicing-debug-p nil)
 
-(defvar image-slicing-curl-buffers nil  "List of buffers used by curl.")
+(defvar-local image-slicing-curl-buffers nil  "List of buffers used by curl.")
 
 (defun image-slicing--async-start-process (name program finish-func &rest program-args)
   "Start the executable PROGRAM asynchronously named NAME.
@@ -125,7 +125,7 @@ Otherwise, just run the CALLBACK function only."
         (image-slicing--async-start-process
          "curl"
          "curl"
-         (lambda (data)
+         (lambda (_)
            (funcall callback temp-image-file))
          image-src
          "-s"
@@ -138,7 +138,8 @@ Otherwise, just run the CALLBACK function only."
 
 (defun image-slicing-display (start end display buffer &optional before-string after-string)
   "Make an overlay from START to END in the BUFFER to show DISPLAY.
-If BEFORE-STRING or AFTER-STRING not nil, put overlay before-string or after-string."
+If BEFORE-STRING or AFTER-STRING not nil, put overlay before-string or
+ after-string."
   (when-let* (((buffer-live-p buffer))
               (overlay (make-overlay start end buffer)))
     (add-to-list 'image-slicing--overlay-list overlay)
@@ -152,7 +153,7 @@ If BEFORE-STRING or AFTER-STRING not nil, put overlay before-string or after-str
     overlay))
 
 (defun image-slicing-slice (image-src max-rows)
-  "Slice IMAGE-SRC into mutiple rows limited by MAX-ROWS."
+  "Slice IMAGE-SRC into multiple rows limited by MAX-ROWS."
   (let* ((image (image-slicing-create-image image-src))
          (image-pixel-cons (image-size image t))
          (image-pixel-h (cdr image-pixel-cons))
@@ -298,7 +299,7 @@ This function is installed on `post-command-hook'."
   (setq image-slicing--links (image-slicing--overlay-list-links))
   (setq image-slicing--timer (image-slicing--create-render-timer))
   (let ((kill-buffer-query-functions nil)
-        (iter))
+        (it))
     (while (setq it (pop image-slicing-curl-buffers))
       (when-let* ((process (get-buffer-process (car it)))
                   (process-live-p process))
@@ -332,7 +333,7 @@ This function is installed on `post-command-hook'."
         (add-hook 'eww-after-render-hook #'image-slicing-mode)
         (message "image-slicing-mode is ON."))
     (setq shr-external-rendering-functions
-          (-remove-item '(img . image-slicing-tag-img) shr-external-rendering-functions))
+          (remove '(img . image-slicing-tag-img) shr-external-rendering-functions))
     (remove-hook 'eww-after-render-hook #'image-slicing-mode)
     (message "image-slicing-mode is OFF."))
   (pcase major-mode
