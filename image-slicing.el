@@ -1,5 +1,5 @@
 ;;; image-slicing.el --- Display an image as overlays.  -*- lexical-binding: t; -*-
-
+;; Package-Requires: ((emacs "28") (dash "2.18.0") (s "1.11.0") (f "0.20.0"))
 ;; Copyright (C) 2024  Qiqi Jin
 
 ;; Author: Qiqi Jin <ginqi7@gmail.com>
@@ -41,6 +41,8 @@
 (require 'url-util)
 (require 'cl-extra)
 (require 'eww)
+(require 'f)
+(require 'dash)
 
 (defcustom image-slicing-cursor-fringe-bitmaps
   '(left-fringe right-arrow warning)
@@ -91,7 +93,7 @@ working directory."
                   :name name
                   :buffer buf
                   :stderr buf-err
-                  :command (cons program (cl-delete nil program-args))))))
+                  :command (cons program (-non-nil program-args))))))
     (set-process-sentinel
      (get-buffer-process buf-err)
      (lambda (proc _change)
@@ -120,21 +122,28 @@ working directory."
   "If IMAGE-SRC is a remote file, download it and run the CALLBACK function.
 Otherwise, just run the CALLBACK function only."
 
-  (let ((temp-image-file (make-temp-file image-slicing--temporary-file-template)))
-    (if (image-slicing--remote-file-p image-src)
-        (image-slicing--async-start-process
-         "curl"
-         "curl"
-         (lambda (_)
-           (funcall callback temp-image-file))
-         image-src
-         "-s"
-         ;; request might be denied by some servers without referer section in http header.
-         (if (equal major-mode 'eww-mode)
-             (concat "-e " (plist-get eww-data :url)))
-         "-o"
-         temp-image-file)
-      (funcall callback image-src))))
+  (let ((temp-image-file
+         (f-expand
+          (concat image-slicing--temporary-file-template (md5 image-src)) temporary-file-directory)))
+    (cond
+     ((f-exists? image-src)
+      (funcall callback image-src))
+     ((f-exists? temp-image-file)
+      (funcall callback temp-image-file))
+     ((image-slicing--remote-file-p image-src)
+      (image-slicing--async-start-process
+       (concat "curl-" (buffer-name))
+       "curl"
+       (lambda (_) (funcall callback temp-image-file))
+       image-src
+       "-s"
+       ;; request might be denied by some servers without referer section in http header.
+       (if (equal major-mode 'eww-mode)
+           (concat "-e " (plist-get eww-data :url)))
+       "-o"
+       temp-image-file))
+     (t
+      (error "DIE: ??")))))
 
 (defun image-slicing-display (start end display buffer &optional before-string after-string)
   "Make an overlay from START to END in the BUFFER to show DISPLAY.
@@ -272,6 +281,15 @@ If BEFORE-STRING or AFTER-STRING not nil, put overlay before-string or
   (mapc #'delete-overlay image-slicing--overlay-list)
   (setq image-slicing--overlay-list nil)
 
+  (let ((kill-buffer-query-functions nil)
+        (it))
+    (while (setq it (pop image-slicing-curl-buffers))
+      (when-let* ((process (get-buffer-process (car it)))
+                  (process-live-p process))
+        (kill-process process))
+      (kill-buffer (car it))
+      (kill-buffer (cdr it))))
+
   (remove-hook 'post-command-hook #'image-slicing-post-command t))
 
 (defun image-slicing-create-image (image-src)
@@ -294,18 +312,13 @@ This function is installed on `post-command-hook'."
         (image-slicing-set-cursor-fringe)
       (image-slicing-unset-cursor-fringe))))
 
+
 (defun image-slicing-render-buffer ()
   "Auto image overlay."
+  (image-slicing-clear)
   (setq image-slicing--links (image-slicing--overlay-list-links))
   (setq image-slicing--timer (image-slicing--create-render-timer))
-  (let ((kill-buffer-query-functions nil)
-        (it))
-    (while (setq it (pop image-slicing-curl-buffers))
-      (when-let* ((process (get-buffer-process (car it)))
-                  (process-live-p process))
-        (kill-process process))
-      (kill-buffer (car it))
-      (kill-buffer (cdr it))))
+
   (add-hook 'post-command-hook #'image-slicing-post-command nil t))
 
 (defun image-slicing-tag-img (dom &optional url)
@@ -333,7 +346,7 @@ This function is installed on `post-command-hook'."
         (add-hook 'eww-after-render-hook #'image-slicing-mode)
         (message "image-slicing-mode is ON."))
     (setq shr-external-rendering-functions
-          (remove '(img . image-slicing-tag-img) shr-external-rendering-functions))
+          (-remove-item '(img . image-slicing-tag-img) shr-external-rendering-functions))
     (remove-hook 'eww-after-render-hook #'image-slicing-mode)
     (message "image-slicing-mode is OFF."))
   (pcase major-mode
