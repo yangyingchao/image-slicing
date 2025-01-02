@@ -118,13 +118,16 @@ working directory."
   "Check if URL is supported by Emacs image."
   (image-supported-file-p (url-file-extension url)))
 
+(defun image-slicing-temporary-file (url)
+  "Return temporary name to save target URL."
+  (f-expand (concat image-slicing--temporary-file-template (md5 url))
+            temporary-file-directory))
+
 (defun image-slicing--download-file-if-need (image-src callback)
   "If IMAGE-SRC is a remote file, download it and run the CALLBACK function.
 Otherwise, just run the CALLBACK function only."
 
-  (let ((temp-image-file
-         (f-expand
-          (concat image-slicing--temporary-file-template (md5 image-src)) temporary-file-directory)))
+  (let ((temp-image-file (image-slicing-temporary-file image-src)))
     (cond
      ((f-exists? image-src)
       (funcall callback image-src))
@@ -323,10 +326,10 @@ This function is installed on `post-command-hook'."
 
 (defun image-slicing-tag-img (dom &optional url)
   "Parse img DOM."
-    (let ((url (string-trim-right (shr-expand-url (or url (shr--preferred-image dom))) ",")))
-      (when (not (string-prefix-p "http" url))
-        (setq url (concat "https:" url)))
-      (insert (format "[[%s]]" url))))
+  (let ((url (string-trim-right (shr-expand-url (or url (shr--preferred-image dom))) ",")))
+    (when (s-starts-with? "http" url)
+      (insert (format "[[%s]]" url))
+      t)))
 
 (define-minor-mode image-slicing-mode
   "A minor mode that show image overlay."
@@ -342,11 +345,10 @@ This function is installed on `post-command-hook'."
   (interactive)
   (if (or enable (not (member #'image-slicing-mode eww-after-render-hook)))
       (progn
-        (add-to-list 'shr-external-rendering-functions '(img . image-slicing-tag-img))
+        (advice-add 'shr-tag-img :before-until #'image-slicing-tag-img)
         (add-hook 'eww-after-render-hook #'image-slicing-mode)
         (message "image-slicing-mode is ON."))
-    (setq shr-external-rendering-functions
-          (-remove-item '(img . image-slicing-tag-img) shr-external-rendering-functions))
+    (advice-remove 'shr-tag-img  #'image-slicing-tag-img)
     (remove-hook 'eww-after-render-hook #'image-slicing-mode)
     (message "image-slicing-mode is OFF."))
   (pcase major-mode
