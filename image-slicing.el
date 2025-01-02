@@ -146,7 +146,7 @@ Otherwise, just run the CALLBACK function only."
        "-o"
        temp-image-file))
      (t
-      (error "DIE: ??")))))
+      (message "file %s not loaded..." image-src)))))
 
 (defun image-slicing-display (start end display buffer &optional before-string after-string)
   "Make an overlay from START to END in the BUFFER to show DISPLAY.
@@ -301,6 +301,7 @@ If the image width is greater than `image-slicing-max-width`, scale it down."
   (let* ((image (create-image image-src))
          (image-pixel-cons (image-size image t))
          (image-pixel-w (car image-pixel-cons)))
+    (image-flush image)
     (when (> image-pixel-w image-slicing-max-width)
       (setf (image-property image :width) image-slicing-max-width))
     image))
