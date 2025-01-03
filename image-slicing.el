@@ -312,7 +312,7 @@ If the image width is greater than `image-slicing-max-width`, scale it down."
 (defun image-slicing-post-command ()
   "Handle cursor visibility in eww-mode when over image slicing overlays.
 This function is installed on `post-command-hook'."
-  (when (derived-mode-p 'eww-mode)
+  (when (memq major-mode '(eww-mode elfeed-show-mode))
     (if (cl-some (lambda (overlay)
                    (string-equal (overlay-get overlay 'overlay-type) "image-slicing"))
                  (overlays-at (point)))
