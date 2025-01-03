@@ -143,6 +143,9 @@ Otherwise, just run the CALLBACK function only."
        ;; request might be denied by some servers without referer section in http header.
        (if (equal major-mode 'eww-mode)
            (concat "-e " (plist-get eww-data :url)))
+       "-L"
+       "--user-agent"
+       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.71 Safari/537.36"
        "-o"
        temp-image-file))
      (t
