@@ -253,7 +253,9 @@ If BEFORE-STRING or AFTER-STRING not nil, put overlay before-string or
   "List all links in the current buffer."
   (let ((links '())
         (content (buffer-string))
-        (buffer (current-buffer)))
+        (buffer (current-buffer))
+        (tab-width 8) ;; org mode requires tab width must be 8.
+        )
     (with-temp-buffer
       (insert content)
       (org-element-map (org-element-parse-buffer) 'link
