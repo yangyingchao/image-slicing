@@ -1,5 +1,6 @@
 ;;; image-slicing.el --- Display an image as overlays.  -*- lexical-binding: t; -*-
 ;; Package-Requires: ((emacs "28") (dash "2.18.0") (s "1.11.0") (f "0.20.0"))
+;; Optional dependency: kitty-graphics.el for terminal (emacs -nw) image display.
 ;; Copyright (C) 2024  Qiqi Jin
 
 ;; Author: Qiqi Jin <ginqi7@gmail.com>
@@ -44,6 +45,11 @@
 (require 'f)
 (require 'dash)
 
+(declare-function kitty-gfx-display-image "kitty-graphics"
+                  (file &optional beg end max-cols max-rows))
+(declare-function kitty-gfx-remove-images "kitty-graphics"
+                  (&optional beg end))
+
 (defcustom image-slicing-cursor-fringe-bitmaps
   '(left-fringe right-arrow warning)
   "Define the Fringe Bitmaps indicator for the cursor position."
@@ -55,20 +61,10 @@
   :group 'image-slicing
   :type 'number)
 
-(defcustom image-slicing-line-height-scale 2
-  "Define how many line height an image slice occupies."
-  :group 'image-slicing
-  :type 'number)
-
 (defcustom image-slicing-max-width 700
   "Define the maximum width of images display."
   :group 'image-slicing
   :type 'number)
-
-(defcustom image-slicing-newline-trailing-text t
-  "Enables putting text trailing an image link on a new line."
-  :group 'image-slicing
-  :type 'boolean)
 
 (defcustom image-slicing-curl-args
   '("-s" "-L"
@@ -179,24 +175,6 @@ If BEFORE-STRING or AFTER-STRING not nil, put overlay before-string or
     (overlay-put overlay 'overlay-type "image-slicing")
     overlay))
 
-(defun image-slicing-slice (image-src max-rows)
-  "Slice IMAGE-SRC into multiple rows limited by MAX-ROWS."
-  (let* ((image (image-slicing-create-image image-src))
-         (image-pixel-cons (image-size image t))
-         (image-pixel-h (cdr image-pixel-cons))
-         (spliced-image-line-height (* image-slicing-line-height-scale (default-font-height)))
-         (rows (max (/ image-pixel-h spliced-image-line-height) 1))
-         (rows (min max-rows rows))
-         (x 0.0)
-         (dx 1.0001)
-         (y 0.0)
-         (dy (/ 1.0001 rows))
-         (sliced-images))
-    (while (< y 1.0)
-      (push (list (list 'slice x y dx dy) image) sliced-images)
-      (setq y (+ y dy)))
-    (reverse sliced-images)))
-
 (defun image-slicing-display-file (image-file-info)
   "Display image by IMAGE-FILE-INFO."
   (save-excursion
@@ -210,27 +188,38 @@ If BEFORE-STRING or AFTER-STRING not nil, put overlay before-string or
       (plist-put image-file-info :status "start")
       (image-slicing--download-file-if-need
        image-src
-       (lambda (image)
-         (when (or (image-slicing-supported-url-p image)
+       (lambda (image-file)
+         (when (or (image-slicing-supported-url-p image-file)
                    (and (executable-find "file")
                         (image-supported-file-p
                          (string-replace "image/" "."
                                          (car (string-split (shell-command-to-string
-                                                             (concat "file -b --mime " image))
+                                                             (concat "file -b --mime " image-file))
                                                             ";"))))))
            (unless line-beginning-p
              (image-slicing-display begin (1+ begin) "" buffer new-line-str)
              (setq begin (1+ begin)))
-	   (let* ((images (image-slicing-slice image (- end begin 1)))
-		  (len (length images)))
-	     (dotimes (i len)
-	       (image-slicing-display begin (1+ begin) (nth i images) buffer nil
-				      (when (or image-slicing-newline-trailing-text
-						(/= i (1- len)))
-					new-line-str))
-	       (setq begin (1+ begin))))
-           (image-slicing-display begin end "" buffer)
-           (plist-put image-file-info :status "finished")))))))
+           (cond
+            ((and (not (display-graphic-p))
+                  (bound-and-true-p kitty-graphics-mode))
+             ;; Terminal: use kitty-graphics protocol
+             (with-current-buffer buffer
+               (condition-case err
+                   (progn
+                     (kitty-gfx-display-image image-file begin end)
+                     (plist-put image-file-info :status "finished"))
+                 (error
+                  (message "image-slicing: kitty-gfx-display-image failed for %s: %s"
+                    image-file (error-message-string err))
+                  (plist-put image-file-info :status "error")))))
+            ((not (display-graphic-p))
+             (message "image-slicing: enable kitty-graphics-mode for terminal image display"))
+            (t
+             ;; GUI: display full image
+             (let ((image (image-slicing-create-image image-file)))
+               (when image
+                 (image-slicing-display begin end image buffer)))
+             (plist-put image-file-info :status "finished")))))))))
 
 (defun image-slicing-run-tasks ()
   "Run Tasks unstarted."
@@ -259,25 +248,25 @@ If BEFORE-STRING or AFTER-STRING not nil, put overlay before-string or
     (with-temp-buffer
       (insert content)
       (org-element-map (org-element-parse-buffer) 'link
-        (lambda (link)
-          (let ((type (org-element-property :type link))
-                (path (org-element-property :path link))
-                (begin (org-element-property :begin link))
-                (end (org-element-property :end link))
-                (raw-link (org-element-property :raw-link link)))
-            (when link
-              (push
-               (list
-                :status "init"
-                :buffer buffer
-                :begin begin
-                :end end
-                :type type
-                :src
-                (pcase type
-                  ("file" (file-truename path))
-                  (_ (url-encode-url raw-link))))
-               links))))))
+                       (lambda (link)
+                         (let ((type (org-element-property :type link))
+                               (path (org-element-property :path link))
+                               (begin (org-element-property :begin link))
+                               (end (org-element-property :end link))
+                               (raw-link (org-element-property :raw-link link)))
+                           (when link
+                             (push
+                              (list
+                               :status "init"
+                               :buffer buffer
+                               :begin begin
+                               :end end
+                               :type type
+                               :src
+                               (pcase type
+                                 ("file" (file-truename path))
+                                 (_ (url-encode-url raw-link))))
+                              links))))))
     (reverse links)))
 
 (defun image-slicing-unset-cursor-fringe ()
@@ -318,7 +307,10 @@ If BEFORE-STRING or AFTER-STRING not nil, put overlay before-string or
       (kill-buffer (car it))
       (kill-buffer (cdr it))))
 
-  (remove-hook 'post-command-hook #'image-slicing-post-command t))
+  (remove-hook 'post-command-hook #'image-slicing-post-command t)
+  (when (and (bound-and-true-p kitty-graphics-mode)
+             (not (display-graphic-p)))
+    (kitty-gfx-remove-images)))
 
 (defun image-slicing-create-image (image-src)
   "Create an image object by IMAGE-SRC.
